@@ -29,7 +29,6 @@ spec:
         imagePullPolicy: Always
         env:
         - name: PROMETHEUS_URL
-          # Questo è il DNS interno di K8s per raggiungere il servizio di Prometheus
           value: "http://kube-prom-stack-kube-prome-prometheus.monitoring.svc.cluster.local:9090"
 
         # --- Tuning rete/watch (valori già di default nel codice, esplicitati qui
