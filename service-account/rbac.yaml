@@ -1,0 +1,42 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: iot-twin-scheduler
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: iot-twin-scheduler
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  # Eseguire il binding pod -> nodo
+  - apiGroups: [""]
+    resources: ["pods/binding"]
+    verbs: ["create"]
+  # Leggere stato e capacità allocabile dei nodi (get_available_nodes,
+  # get_node_capacity per il calcolo delle percentuali CPU/RAM)
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  # NUOVO: uso CPU/RAM in tempo reale dei nodi via Metrics Server
+  # (resource awareness + fallback)
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: iot-twin-scheduler
+subjects:
+  - kind: ServiceAccount
+    name: iot-twin-scheduler
+    namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: iot-twin-scheduler
+  apiGroup: rbac.authorization.k8s.io

@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-massivo-twins
+  labels:
+    app: iot-twin
+spec:
+  replicas: 10
+  selector:
+    matchLabels:
+      app: iot-twin
+  template:
+    metadata:
+      labels:
+        app: iot-twin
+      annotations:
+        # Puoi cambiare questa strategia in disk-io-aware o rimuoverla del tutto
+        iot-scheduler/strategy: "minimize-latency"
+    spec:
+      schedulerName: iot-twin-scheduler
+      containers:
+      - name: dummy-app
+        image: alpine
+        command: ["sleep", "3600"]

@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iot-twin-scheduler
+  namespace: kube-system
+  labels:
+    app: iot-twin-scheduler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: iot-twin-scheduler
+  template:
+    metadata:
+      labels:
+        app: iot-twin-scheduler
+    spec:
+      serviceAccountName: iot-twin-scheduler # Fondamentale per i permessi RBAC
+
+      # NUOVO: il watch interno può restare in attesa fino a WATCH_STREAM_TIMEOUT_SECONDS
+      # (default 120s) prima di ricontrollare se deve spegnersi. La grace period di
+      # default di K8s (30s) non basterebbe a far terminare il processo in modo pulito
+      # (SIGTERM) prima del SIGKILL forzato: la alziamo di conseguenza.
+      terminationGracePeriodSeconds: 130
+
+      containers:
+      - name: scheduler
+        image: aprozzo/iot-twin-scheduler:v0.1
+        imagePullPolicy: Always
+        env:
+        - name: PROMETHEUS_URL
+          # Questo è il DNS interno di K8s per raggiungere il servizio di Prometheus
+          value: "http://kube-prom-stack-kube-prome-prometheus.monitoring.svc.cluster.local:9090"
+
+        # --- Tuning rete/watch (valori già di default nel codice, esplicitati qui
+        #     per documentazione e riproducibilità nella tesi) ---
+        - name: PROMETHEUS_TIMEOUT_SECONDS
+          value: "6"
+        - name: WATCH_STREAM_TIMEOUT_SECONDS
+          value: "120"
+        - name: WATCH_ERROR_BACKOFF_SECONDS
+          value: "5"
+        - name: MAX_CONSECUTIVE_FALLBACKS_WARNING
+          value: "5"
+
+        # --- NUOVO: Resource awareness (hard filter + scoring pesato CPU/RAM) ---
+        - name: MAX_CPU_USAGE_PERCENT
+          value: "85"
+        - name: MAX_MEM_USAGE_PERCENT
+          value: "85"
+        - name: WEIGHT_STRATEGY
+          value: "0.6"
+        - name: WEIGHT_CPU
+          value: "0.2"
+        - name: WEIGHT_MEM
+          value: "0.2"
+
+        resources:
+          requests:
+            cpu: 50m
+            memory: 50Mi
+          limits:
+            cpu: 200m
+            memory: 100Mi

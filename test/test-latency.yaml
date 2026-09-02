@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-latency-twin
+  annotations:
+    iot-scheduler/strategy: "minimize-latency"
+spec:
+  schedulerName: iot-twin-scheduler
+  containers:
+  - name: dummy-app
+    image: alpine
+    command: ["sleep", "3600"]
