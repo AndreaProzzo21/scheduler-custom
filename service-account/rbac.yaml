@@ -40,3 +40,4 @@ roleRef:
   kind: ClusterRole
   name: iot-twin-scheduler
   apiGroup: rbac.authorization.k8s.io
+  
