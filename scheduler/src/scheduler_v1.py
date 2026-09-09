@@ -461,13 +461,18 @@ def calculate_best_node(api_instance, nodes_dict, annotations):
     return best_node
 
 
-# --- POD EVENT HANDLING ---
 def _process_pod_event(v1, pod):
+    # 1. Avvio cronometri
+    start_time_perf = time.perf_counter() # Alta precisione per la durata (overhead)
+    start_time_sys = time.time()          # Timestamp assoluto (Epoch) per il recovery time
+    
     pod_name = pod.metadata.name
     namespace = pod.metadata.namespace
     annotations = pod.metadata.annotations or {}
 
     logging.info(f"--- 🔍 Intercepted pending pod: {pod_name} ---")
+    # Log di inizio con timestamp
+    logging.info(f"📊 [METRIC-START] Pod: {pod_name} | Intercepted_At: {start_time_sys}")
 
     nodes_dict = get_available_nodes(v1)
     if not nodes_dict:
@@ -482,7 +487,19 @@ def _process_pod_event(v1, pod):
         )
         return
 
-    bind_pod(v1, pod_name, namespace, best_node)
+    # Esegue il binding (salviamo l'esito visto che ora bind_pod restituisce True/False)
+    bind_success = bind_pod(v1, pod_name, namespace, best_node)
+
+    # 2. Fine cronometro e calcolo
+    end_time_perf = time.perf_counter()
+    duration_ms = (end_time_perf - start_time_perf) * 1000
+
+    if bind_success:
+        # Log finale per i grafici
+        logging.info(
+            f"📊 [METRIC-END] Pod: {pod_name} | TargetNode: {best_node} | "
+            f"Overhead: {duration_ms:.2f} ms"
+        )
 
 
 # --- MAIN LOOP ---
