@@ -13,6 +13,11 @@ rules:
 - apiGroups: [""]
   resources: ["nodes", "pods"]
   verbs: ["get", "list"]
+# "events" e' il permesso NUOVO richiesto dalla revisione con il monitoraggio
+# scheduler/Overview (feed eventi cluster-wide e feed eventi dello scheduler).
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["get", "list"]
 - apiGroups: ["apps"]
   resources: ["deployments"]
   verbs: ["get", "list", "patch"]
@@ -49,17 +54,37 @@ spec:
       containers:
       - name: dashboard
         image: aprozzo/iot-twin-scheduler-dashboard:v1 # Sostituisci con la tua build
-        imagePullPolicy: Always # <--- AGGIUNTO QUI
+        imagePullPolicy: Always
         ports:
         - containerPort: 8080
         env:
         - name: PROMETHEUS_URL
           value: "http://prometheus-operated.monitoring.svc.cluster.local:9090"
+        # --- Identifica il custom scheduler per filtrare i workload gestiti ---
+        - name: SCHEDULER_NAME
+          value: "iot-twin-scheduler"   # deve == spec.template.spec.schedulerName dei tuoi Deployment
+        # --- Identifica il Deployment DELLO SCHEDULER STESSO (tab "Scheduler") ---
+        - name: SCHEDULER_DEPLOYMENT_NAME
+          value: "iot-twin-scheduler"   # <-- verifica: nome esatto del Deployment dello scheduler
+        - name: SCHEDULER_NAMESPACE
+          value: "kube-system"              # <-- verifica: namespace dove hai deployato lo scheduler
+        # --- Query PromQL delle metriche custom esposte dallo scheduler (opzionali) ---
+        # Lascia i default se lo scheduler non esporta ancora un /metrics: il pannello
+        # mostrera' semplicemente "N/D" senza errori. Aggiornali quando avrai i nomi reali.
+        - name: SCHED_METRIC_DECISIONS
+          value: "sum(iot_scheduler_scheduling_decisions_total)"
+        - name: SCHED_METRIC_ERRORS
+          value: "sum(iot_scheduler_scheduling_errors_total)"
+        - name: SCHED_METRIC_LATENCY
+          value: "avg(iot_scheduler_scheduling_duration_seconds) * 1000"
+        - name: SCHED_METRIC_QUEUE
+          value: "sum(iot_scheduler_pending_queue_size)"
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: iot-adv-dashboard-svc
+  namespace: default
 spec:
   type: NodePort
   selector:
