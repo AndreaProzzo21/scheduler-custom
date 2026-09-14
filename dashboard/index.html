@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enterprise Scheduler Console</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: { extend: { colors: { 
+                base: '#0f1115', 
+                panel: '#16191f', 
+                border: '#2a2e37', 
+                primary: '#2563eb', 
+                textmain: '#d1d5db',
+                textmuted: '#9ca3af'
+            } } }
+        }
+    </script>
+    <style>
+        body { background-color: #0f1115; color: #d1d5db; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 13px; }
+        table { width: 100%; border-collapse: collapse; }
+        th { text-transform: uppercase; font-size: 11px; letter-spacing: 0.05em; color: #9ca3af; padding: 12px 16px; border-bottom: 1px solid #2a2e37; text-align: left; background: #1a1d24;}
+        td { padding: 12px 16px; border-bottom: 1px solid #2a2e37; }
+        .badge { padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 500; border: 1px solid #2a2e37; background: #1f232b; }
+        .badge-success { border-color: #059669; color: #10b981; background: rgba(16, 185, 129, 0.1); }
+        .badge-warning { border-color: #d97706; color: #f59e0b; background: rgba(245, 158, 11, 0.1); }
+        .input-std { background: #0f1115; border: 1px solid #2a2e37; color: #d1d5db; border-radius: 4px; padding: 6px 10px; font-size: 13px; width: 100%; outline: none; }
+        .input-std:focus { border-color: #2563eb; }
+        .btn-primary { background: #2563eb; color: #fff; padding: 6px 12px; border-radius: 4px; font-weight: 500; transition: background 0.2s; border: none; cursor: pointer; }
+        .btn-primary:hover { background: #1d4ed8; }
+        .btn-secondary { background: transparent; border: 1px solid #2a2e37; color: #d1d5db; padding: 6px 12px; border-radius: 4px; cursor: pointer; transition: background 0.2s; }
+        .btn-secondary:hover { background: #1f232b; }
+    </style>
+</head>
+<body class="flex h-screen overflow-hidden">
+
+    <!-- Sidebar -->
+    <aside class="w-64 bg-panel border-r border-border flex flex-col">
+        <div class="h-16 flex items-center px-6 border-b border-border">
+            <span class="font-bold text-white text-sm tracking-widest">IOT SCHEDULER</span>
+        </div>
+        <nav class="flex-1 py-4">
+            <button onclick="switchView('overview')" id="nav-overview" class="w-full text-left px-6 py-3 text-textmain bg-base border-r-2 border-primary font-medium">System Overview</button>
+            <button onclick="switchView('workloads')" id="nav-workloads" class="w-full text-left px-6 py-3 text-textmuted hover:text-textmain font-medium border-r-2 border-transparent transition">Workload Telemetry</button>
+            <button onclick="switchView('nodes')" id="nav-nodes" class="w-full text-left px-6 py-3 text-textmuted hover:text-textmain font-medium border-r-2 border-transparent transition">Infrastructure Nodes</button>
+        </nav>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 overflow-y-auto bg-base p-8 relative">
+        
+        <!-- Header / KPI -->
+        <div class="flex gap-4 mb-8">
+            <div class="bg-panel border border-border rounded-lg p-5 flex-1 shadow-sm">
+                <div class="text-xs text-textmuted uppercase tracking-wider mb-1">Managed Workloads</div>
+                <div class="text-3xl font-light text-white" id="kpi-total">0</div>
+            </div>
+            <div class="bg-panel border border-border rounded-lg p-5 flex-1 shadow-sm">
+                <div class="text-xs text-textmuted uppercase tracking-wider mb-1">Running / Pending</div>
+                <div class="text-3xl font-light text-white"><span id="kpi-run" class="text-emerald-400">0</span> <span class="text-border mx-2">/</span> <span id="kpi-pend" class="text-amber-400">0</span></div>
+            </div>
+            <div class="bg-panel border border-border rounded-lg p-5 flex-1 shadow-sm">
+                <div class="text-xs text-textmuted uppercase tracking-wider mb-1">Active Strategies</div>
+                <div class="text-3xl font-light text-white" id="kpi-strats">0</div>
+            </div>
+        </div>
+
+        <!-- VIEW: OVERVIEW (Hidden by default, used for general charts in future, currently redirects to Workloads visually) -->
+        <div id="view-overview" class="hidden"></div>
+
+        <!-- VIEW: WORKLOADS -->
+        <div id="view-workloads" class="block">
+            <div class="bg-panel border border-border rounded-lg shadow-sm overflow-hidden">
+                <div class="px-6 py-4 border-b border-border flex justify-between items-center">
+                    <h2 class="text-sm font-semibold text-white">Digital Twin Deployments</h2>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Deployment / Pod</th>
+                            <th>Target Node</th>
+                            <th>Hardware Constraints</th>
+                            <th>Routing Strategy</th>
+                            <th>CPU (m)</th>
+                            <th>RAM (MB)</th>
+                            <th>Status</th>
+                            <th class="text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="workloads-tbody">
+                        <!-- Injected by JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- VIEW: NODES -->
+        <div id="view-nodes" class="hidden">
+            <div class="bg-panel border border-border rounded-lg shadow-sm overflow-hidden">
+                <div class="px-6 py-4 border-b border-border">
+                    <h2 class="text-sm font-semibold text-white">Edge Infrastructure</h2>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Node Name</th>
+                            <th>Internal IP</th>
+                            <th>Hardware Tags</th>
+                            <th style="width: 200px;">CPU Load</th>
+                            <th style="width: 200px;">Memory Load</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="nodes-tbody">
+                        <!-- Injected by JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <!-- Reschedule Modal -->
+    <div id="reschedule-modal" class="fixed inset-0 bg-black/80 z-50 hidden items-center justify-center">
+        <div class="bg-panel border border-border p-6 rounded-lg w-full max-w-lg shadow-2xl">
+            <h3 class="text-lg font-medium text-white mb-1">Modify Scheduling Parameters</h3>
+            <p class="text-xs text-textmuted mb-6" id="modal-dt-name"></p>
+            
+            <form id="reschedule-form" class="space-y-5">
+                <input type="hidden" id="form-ns">
+                <input type="hidden" id="form-name">
+                
+                <div>
+                    <label class="block text-xs font-semibold text-textmuted uppercase mb-2">Hardware Requirements (Tags)</label>
+                    <input type="text" id="form-hw" class="input-std" placeholder="gpu-jetson, nvme-storage">
+                    <p class="text-[10px] text-textmuted mt-1">Comma separated list of required node capabilities. Hard filter.</p>
+                </div>
+                
+                <div>
+                    <label class="block text-xs font-semibold text-textmuted uppercase mb-2">Primary Strategy</label>
+                    <select id="form-strategy" class="input-std">
+                        <option value="default">Default (Optimize CPU/RAM)</option>
+                        <option value="minimize-latency">Minimize Latency (Prometheus Ping)</option>
+                        <option value="temperature-aware">Temperature Aware</option>
+                        <option value="disk-io-aware">Disk I/O Aware</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-textmuted uppercase mb-2">Strategy Target</label>
+                    <input type="text" id="form-target" class="input-std" placeholder="e.g. 192.168.0.66">
+                    <p class="text-[10px] text-textmuted mt-1">Applicable only for minimize-latency. Leave empty for average.</p>
+                </div>
+
+                <div class="flex justify-end gap-3 pt-4 border-t border-border mt-6">
+                    <button type="button" onclick="closeModal()" class="btn-secondary">Cancel</button>
+                    <button type="submit" class="btn-primary">Apply & Reschedule</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        function switchView(viewId) {
+            ['overview', 'workloads', 'nodes'].forEach(id => {
+                document.getElementById(`view-${id}`).classList.add('hidden');
+                document.getElementById(`view-${id}`).classList.remove('block');
+                document.getElementById(`nav-${id}`).className = 'w-full text-left px-6 py-3 text-textmuted hover:text-textmain font-medium border-r-2 border-transparent transition';
+            });
+            
+            const activeView = viewId === 'overview' ? 'workloads' : viewId;
+            document.getElementById(`view-${activeView}`).classList.remove('hidden');
+            document.getElementById(`view-${activeView}`).classList.add('block');
+            document.getElementById(`nav-${viewId}`).className = 'w-full text-left px-6 py-3 text-textmain bg-base border-r-2 border-primary font-medium';
+        }
+
+        function openModal(ns, name, hw, strategy, target) {
+            document.getElementById('modal-dt-name').innerText = `Target Workload: ${ns} / ${name}`;
+            document.getElementById('form-ns').value = ns;
+            document.getElementById('form-name').value = name;
+            document.getElementById('form-hw').value = hw || '';
+            document.getElementById('form-strategy').value = strategy || 'default';
+            document.getElementById('form-target').value = target || '';
+            
+            const modal = document.getElementById('reschedule-modal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function closeModal() {
+            const modal = document.getElementById('reschedule-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        function buildBar(val) {
+            const color = val > 80 ? 'bg-red-500' : (val > 60 ? 'bg-amber-500' : 'bg-emerald-500');
+            return `
+                <div class="flex items-center gap-3">
+                    <div class="w-full bg-border rounded-sm h-1.5 overflow-hidden">
+                        <div class="${color} h-1.5" style="width: ${val}%"></div>
+                    </div>
+                    <span class="text-xs font-mono w-8 text-right">${val}%</span>
+                </div>
+            `;
+        }
+
+        async function fetchData() {
+            try {
+                const res = await fetch('/api/dashboard');
+                if (!res.ok) return;
+                const data = await res.json();
+                
+                // KPIs
+                document.getElementById('kpi-total').innerText = data.scheduler_stats.total_managed;
+                document.getElementById('kpi-run').innerText = data.scheduler_stats.running;
+                document.getElementById('kpi-pend').innerText = data.scheduler_stats.pending;
+                document.getElementById('kpi-strats').innerText = data.scheduler_stats.strategies_used.length;
+
+                // Workloads Table
+                const wlHtml = data.workloads.map(w => {
+                    const statClass = w.status === 'Running' ? 'badge-success' : 'badge-warning';
+                    const hwTags = w.hw_required ? w.hw_required.split(',').map(t => `<span class="badge">${t.trim()}</span>`).join(' ') : '<span class="text-textmuted">-</span>';
+                    
+                    return `
+                        <tr>
+                            <td>
+                                <div class="font-semibold text-white">${w.deployment_name}</div>
+                                <div class="text-[10px] text-textmuted font-mono mt-1">${w.pod_name || 'waiting...'}</div>
+                            </td>
+                            <td class="font-mono text-xs">${w.current_node}</td>
+                            <td>${hwTags}</td>
+                            <td>
+                                <div class="text-xs">${w.strategy}</div>
+                                ${w.target ? `<div class="text-[10px] text-textmuted mt-0.5 font-mono">Target: ${w.target}</div>` : ''}
+                            </td>
+                            <td class="font-mono text-xs text-white">${w.cpu_usage_mc > 0 ? w.cpu_usage_mc : '-'}</td>
+                            <td class="font-mono text-xs text-white">${w.ram_usage_mb > 0 ? w.ram_usage_mb : '-'}</td>
+                            <td><span class="badge ${statClass}">${w.status}</span></td>
+                            <td class="text-right">
+                                <button onclick="openModal('${w.namespace}', '${w.deployment_name}', '${w.hw_required}', '${w.strategy}', '${w.target}')" class="btn-secondary text-xs py-1 px-3">Edit Rules</button>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+                document.getElementById('workloads-tbody').innerHTML = wlHtml || '<tr><td colspan="8" class="text-center text-textmuted py-8">No workloads managed by IoT Scheduler.</td></tr>';
+
+                // Nodes Table
+                const ndHtml = data.nodes.map(n => {
+                    const hwTags = n.hw_tags ? n.hw_tags.split(',').map(t => `<span class="badge">${t.trim()}</span>`).join(' ') : '-';
+                    const statClass = n.status === 'Ready' ? 'badge-success' : 'badge-warning';
+                    return `
+                        <tr>
+                            <td class="font-semibold text-white">${n.name}</td>
+                            <td class="font-mono text-xs">${n.ip}</td>
+                            <td>${hwTags}</td>
+                            <td>${buildBar(n.cpu_pct)}</td>
+                            <td>${buildBar(n.ram_pct)}</td>
+                            <td><span class="badge ${statClass}">${n.status}</span></td>
+                        </tr>
+                    `;
+                }).join('');
+                document.getElementById('nodes-tbody').innerHTML = ndHtml;
+
+            } catch (err) {
+                console.error("Dashboard refresh error:", err);
+            }
+        }
+
+        document.getElementById('reschedule-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const ns = document.getElementById('form-ns').value;
+            const name = document.getElementById('form-name').value;
+            
+            const payload = {
+                hw_required: document.getElementById('form-hw').value,
+                strategy: document.getElementById('form-strategy').value,
+                target: document.getElementById('form-target').value
+            };
+
+            await fetch(`/api/reschedule/${ns}/${name}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            
+            closeModal();
+            fetchData();
+        });
+
+        // Initialize and Set Interval
+        switchView('workloads');
+        fetchData();
+        setInterval(fetchData, 4000);
+    </script>
+</body>
+</html>

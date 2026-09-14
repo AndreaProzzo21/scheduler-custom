@@ -1,0 +1,70 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: adv-dashboard-sa
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: adv-dashboard-role
+rules:
+- apiGroups: [""]
+  resources: ["nodes", "pods"]
+  verbs: ["get", "list"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: adv-dashboard-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: adv-dashboard-role
+subjects:
+- kind: ServiceAccount
+  name: adv-dashboard-sa
+  namespace: default
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iot-adv-dashboard
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: iot-adv-dashboard
+  template:
+    metadata:
+      labels:
+        app: iot-adv-dashboard
+    spec:
+      serviceAccountName: adv-dashboard-sa
+      containers:
+      - name: dashboard
+        image: aprozzo/iot-twin-scheduler-dashboard:v1 # Sostituisci con la tua build
+        imagePullPolicy: Always # <--- AGGIUNTO QUI
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PROMETHEUS_URL
+          value: "http://prometheus-operated.monitoring.svc.cluster.local:9090"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: iot-adv-dashboard-svc
+spec:
+  type: NodePort
+  selector:
+    app: iot-adv-dashboard
+  ports:
+  - port: 80
+    targetPort: 8080
+    nodePort: 32011
