@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dt-storage-heavy-1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dt-storage
+  template:
+    metadata:
+      labels:
+        app: dt-storage
+      annotations:
+        iot-scheduler/hw-required: "nvme-storage"
+        iot-scheduler/strategy: "minimize-latency"
+        # Specifica il target esatto per il blackbox exporter
+        iot-scheduler/strategy-target: "192.168.0.66" 
+    spec:
+      schedulerName: iot-twin-scheduler
+      containers:
+      - name: twin-container
+        image: nginx:alpine

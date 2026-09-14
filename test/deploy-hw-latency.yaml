@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dt-test-workload
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: digital-twin-test
+  template:
+    metadata:
+      labels:
+        app: digital-twin-test
+      annotations:
+        # 1. Filtro Hardware (Hard Filter): il nodo deve avere questi due tag
+        iot-scheduler/hw-required: "nvme-storage"
+        
+        # 2. Strategia (Soft Filter / Scoring): minimizzare la latenza
+        iot-scheduler/strategy: "minimize-latency"
+        
+        # 3. Target Latenza (Multi-Target): l'IP specifico del sensore verso cui ottimizzare
+        iot-scheduler/strategy-target: "192.168.0.66"
+    spec:
+      # FONDAMENTALE: Dichiara l'uso del tuo custom scheduler
+      schedulerName: iot-twin-scheduler
+      containers:
+      - name: dt-container
+        image: nginx:alpine
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "250m"
+            memory: "256Mi"
