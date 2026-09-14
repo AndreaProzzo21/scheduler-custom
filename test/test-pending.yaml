@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dt-impossible
+  annotations:
+    iot-scheduler/hw-required: "tpu-google"
+spec:
+  schedulerName: iot-twin-scheduler
+  containers:
+  - name: twin-container
+    image: nginx:alpine

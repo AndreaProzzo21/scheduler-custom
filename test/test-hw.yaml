@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dt-vision-model
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dt-vision
+  template:
+    metadata:
+      labels:
+        app: dt-vision
+      annotations:
+        # Richiede esattamente questo tag hardware
+        iot-scheduler/hw-required: "gpu-jetson" 
+        # Nessuna strategia specificata (default)
+    spec:
+      schedulerName: iot-twin-scheduler
+      containers:
+      - name: twin-container
+        image: nginx:alpine
