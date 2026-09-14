@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dt-workload-latency
+  namespace: default
+  labels:
+    app: digital-twin
+    type: dummy-sensor
+spec:
+  replicas: 1 # Mettiamo 3 repliche per vedere come lo scheduler le distribuisce
+  selector:
+    matchLabels:
+      app: digital-twin
+  template:
+    metadata:
+      labels:
+        app: digital-twin
+      annotations:
+        # 1. LA STRATEGIA: Questa stringa viene letta da annotations.get('iot-scheduler/strategy')
+        iot-scheduler/strategy: "minimize-latency"
+    spec:
+      # 2. LO SCHEDULER: K8s ignorerà il default scheduler e lascerà i Pod in Pending
+      # finché il tuo script Python non li intercetta.
+      schedulerName: iot-twin-scheduler
+      containers:
+      - name: twin-container
+        # Usiamo un'immagine leggerissima che simula un microservizio sempre attivo
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        resources:
+          # È sempre buona norma mettere request/limits fittizi, anche se il tuo
+          # scheduler attualmente guarda il consumo reale del nodo.
+          requests:
+            cpu: "25m"
+            memory: "64Mi"
+          limits:
+            cpu: "100m"
+            memory: "128Mi"
