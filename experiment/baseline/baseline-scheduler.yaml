@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dt-mcdm-custom
+  namespace: default
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: twin-sensor
+      experiment: custom-mcdm
+  template:
+    metadata:
+      labels:
+        app: twin-sensor
+        experiment: custom-mcdm
+      annotations:
+        iot-scheduler/strategy: "minimize-latency"
+        iot-scheduler/strategy-target: "192.168.0.61" # IP del tuo EMQX
+    spec:
+      # IL TUO SCHEDULER: Eviterà il Nodo C come la peste
+      schedulerName: iot-twin-scheduler
+      containers:
+      - name: dt-telemetry-engine
+        image: aprozzo/edge-dt-mqtt:v1  # <-- LA TUA IMMAGINE
+        imagePullPolicy: Always
+        env:
+        - name: MQTT_BROKER_IP
+          value: "192.168.0.61" # IP del tuo EMQX
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"

@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dt-baseline-default
+  namespace: default
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: twin-sensor
+      experiment: baseline
+  template:
+    metadata:
+      labels:
+        app: twin-sensor
+        experiment: baseline
+    spec:
+      # NESSUN SCHEDULER: K8s metterà un pod sul Nodo C
+      containers:
+      - name: dt-telemetry-engine
+        image: aprozzo/edge-dt-mqtt:v1  # <-- LA TUA IMMAGINE
+        imagePullPolicy: Always
+        env:
+        - name: MQTT_BROKER_IP
+          value: "192.168.0.61" # IP del tuo EMQX
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
