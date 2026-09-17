@@ -571,10 +571,24 @@ def calculate_best_node(api_instance, nodes_dict, annotations):
 
     scores = {}
     for node_name in candidate_nodes:
-        s = norm_strategy.get(node_name, 0.0) * w_strategy
-        s += norm_cpu.get(node_name, 0.0) * w_cpu
-        s += norm_mem.get(node_name, 0.0) * w_mem
+        # 1. Controllo Penalità Infinita: se mancano i dati, il nodo è irraggiungibile!
+        missing_strategy = (w_strategy > 0) and (node_name not in norm_strategy)
+        missing_resources = (node_name not in norm_cpu) or (node_name not in norm_mem)
+        
+        if missing_strategy or missing_resources:
+            scores[node_name] = 999999.0 # PENALITÀ INFINITA: perderà la gara del "min()"
+            logging.info(
+                f"🧮 Node [{node_name}] - score=999999.0 (PENALITÀ INFINITA: "
+                f"Dati di telemetria mancanti o in timeout)"
+            )
+            continue # Passa al nodo successivo
+
+        # 2. Calcolo normale per i nodi sani
+        s = norm_strategy.get(node_name, 1.0) * w_strategy
+        s += norm_cpu.get(node_name, 1.0) * w_cpu
+        s += norm_mem.get(node_name, 1.0) * w_mem
         scores[node_name] = s / total_w
+        
         logging.info(
             f"🧮 Node [{node_name}] - score={scores[node_name]:.3f} "
             f"(strategy_raw={strategy_raw.get(node_name)}, "
