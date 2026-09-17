@@ -31,21 +31,28 @@ Rispetto alla versione base sono stati risolti i seguenti problemi:
   9. Graceful shutdown su SIGTERM/SIGINT.
  10. Metriche di overhead scheduling (tempo intercettazione -> bind) loggate
      con prefisso [METRIC-START]/[METRIC-END] per analisi successiva.
- 11. HARDWARE AWARENESS (novità): i nodi dichiarano le proprie capacità hardware
-     (es. GPU specifica, sensori) tramite un'annotation "una tantum"
+ 11. HARDWARE AWARENESS: i nodi dichiarano le proprie capacità hardware (es.
+     GPU specifica, sensori) tramite un'annotation "una tantum"
      (iot-scheduler/hw-tags, letta dai metadata del nodo: nessun RBAC nuovo).
      Il pod le richiede con l'annotation iot-scheduler/hw-required. È un filtro
      HARD applicato PRIMA di tutto il resto: se nessun nodo soddisfa i
      requisiti, il pod resta Pending (nessun fallback, a differenza del filtro
      soft su CPU/RAM). Solo tra i nodi hardware-compatibili si procede con
      strategia + resource awareness.
- 12. MULTI-TARGET LATENCY (novità): con la strategia minimize-latency è ora
-     possibile specificare, via iot-scheduler/strategy-target, l'IP/alias
-     specifico verso cui minimizzare la latenza (utile se il blackbox exporter
-     sonda più target). Senza annotation, si usa la media su tutti i target
-     sondati da ciascun nodo (corregge anche un bug latente: con più target
-     per nodo, prima le serie si sovrascrivevano a vicenda in modo non
-     deterministico nel dizionario delle metriche).
+ 12. MULTI-TARGET LATENCY: con la strategia minimize-latency è possibile
+     specificare, via iot-scheduler/strategy-target, l'IP/alias specifico verso
+     cui minimizzare la latenza (utile se il blackbox exporter sonda più
+     target). Senza annotation, si usa la media su tutti i target sondati da
+     ciascun nodo.
+ 13. FIX (novità): la degradazione silenziosa di una strategia richiesta ma non
+     utilizzabile (es. temperature-aware senza dati) ora viene SEMPRE loggata e
+     conteggiata nel tracking dei fallback, anche quando le metriche di risorsa
+     sono disponibili e "salvano" la schedulazione — prima il log/tracking
+     scattava solo se ANCHE le risorse fallivano, mascherando il problema.
+     Aggiunti inoltre: warning esplicito su nomi di strategia sconosciuti
+     (probabile typo nell'annotation), confronto case-insensitive tra hw-tags
+     del pod e del nodo, ed escaping più robusto del target di latenza nella
+     query PromQL.
 
 NON risolti volutamente (fuori scope per una PoC di tesi, da citare eventualmente
 come limiti del lavoro in sede di discussione):
@@ -55,6 +62,9 @@ come limiti del lavoro in sede di discussione):
     dal comportamento standard di kube-scheduler).
   - Rispetto di nodeSelector / nodeAffinity / tolerations standard di Kubernetes.
   - Leader election per l'alta affidabilità (più repliche dello scheduler).
+  - Retry/resync automatico per pod bloccati da un filtro hard (es. hardware
+    non ancora disponibile): oggi un pod così resta Pending finché non arriva
+    un nuovo evento ADDED per lui (es. ricreazione del pod).
 """
 
 from kubernetes import client, config, watch
@@ -86,9 +96,12 @@ WEIGHT_MEM = float(os.getenv("WEIGHT_MEM", "0.2"))
 
 # --- ANNOTATION KEYS ---
 ANNOTATION_STRATEGY = 'iot-scheduler/strategy'
-ANNOTATION_LATENCY_TARGET = 'iot-scheduler/strategy-target'   # NUOVO: IP/alias per minimize-latency
-ANNOTATION_HW_REQUIRED = 'iot-scheduler/hw-required'           # NUOVO: hw richiesto dal pod (comma-separated)
-NODE_ANNOTATION_HW_TAGS = 'iot-scheduler/hw-tags'               # NUOVO: hw dichiarato dal nodo (comma-separated)
+ANNOTATION_LATENCY_TARGET = 'iot-scheduler/strategy-target'   # IP/alias per minimize-latency
+ANNOTATION_HW_REQUIRED = 'iot-scheduler/hw-required'           # hw richiesto dal pod (comma-separated)
+NODE_ANNOTATION_HW_TAGS = 'iot-scheduler/hw-tags'               # hw dichiarato dal nodo (comma-separated)
+
+# Strategie note allo scheduler (usato per rilevare typo nell'annotation).
+KNOWN_STRATEGIES = {'minimize-latency', 'temperature-aware', 'disk-io-aware'}
 
 # --- STATO GLOBALE MINIMO ---
 _round_robin_cycle_cache = {}       # {frozenset(nodi): itertools.cycle}
@@ -185,12 +198,14 @@ def get_available_nodes(api_instance):
 
 def get_node_hw_tags(api_instance, nodes_dict):
     """
-    NUOVO. Legge dall'annotation NODE_ANNOTATION_HW_TAGS di ciascun nodo l'elenco
+    Legge dall'annotation NODE_ANNOTATION_HW_TAGS di ciascun nodo l'elenco
     (comma-separated) delle capacità hardware dichiarate, es. "gpu-jetson-nano,camera-csi".
     Configurazione "una tantum" per nodo, impostabile con:
         kubectl annotate node <nome-nodo> iot-scheduler/hw-tags="gpu-jetson-nano,camera-csi" --overwrite
     Nessun permesso RBAC aggiuntivo richiesto: le annotation sono parte dei
     metadata del nodo, già letti da get_available_nodes.
+    Confronto case-insensitive: i tag vengono normalizzati in lowercase per
+    evitare mismatch dovuti a maiuscole/minuscole tra pod e nodo.
     Ritorna { node_name: set(tag) }. Un nodo senza annotation ha set() vuoto.
     """
     tags = {}
@@ -202,7 +217,7 @@ def get_node_hw_tags(api_instance, nodes_dict):
                 continue
             node_annotations = n.metadata.annotations or {}
             raw = node_annotations.get(NODE_ANNOTATION_HW_TAGS, '')
-            tags[name] = {t.strip() for t in raw.split(',') if t.strip()}
+            tags[name] = {t.strip().lower() for t in raw.split(',') if t.strip()}
     except Exception as e:
         logging.warning(f"⚠️ Impossibile leggere le hw-tags dei nodi: {e}")
     return tags
@@ -404,9 +419,9 @@ def _track_fallback(strategy):
 
 def calculate_best_node(api_instance, nodes_dict, annotations):
     """
-    Sceglie il nodo migliore in tre passi:
-      0. (NUOVO) Filtro HARDWARE hard: se il pod richiede capacità hardware
-         specifiche (iot-scheduler/hw-required), solo i nodi che le possiedono
+    Sceglie il nodo migliore in passi successivi:
+      0. Filtro HARDWARE hard: se il pod richiede capacità hardware specifiche
+         (iot-scheduler/hw-required), solo i nodi che le possiedono
          (iot-scheduler/hw-tags) restano candidati. Nessun fallback qui: se
          nessuno le ha, il pod resta Pending.
       1. Filtro CPU/RAM soft: tra i candidati hardware-compatibili, esclude
@@ -415,14 +430,26 @@ def calculate_best_node(api_instance, nodes_dict, annotations):
       2. Scoring pesato tra i candidati rimasti: combina la metrica di
          strategia (latenza/temperatura/disk-io, se disponibile) con
          l'utilizzo % di CPU e RAM.
+
+    Se la strategia richiesta risulta non utilizzabile (query vuota, Prometheus
+    giù, nessuna corrispondenza nome/IP con i nodi), il fatto viene SEMPRE
+    loggato e tracciato nel contatore dei fallback consecutivi, anche quando
+    CPU/RAM sono disponibili e permettono comunque di schedulare il pod.
     """
     strategy = annotations.get(ANNOTATION_STRATEGY, 'default')
     logging.info(f"🎯 Pod requested strategy: [{strategy}]")
 
-    # --- 0. HARDWARE HARD FILTER (novità) ---
+    strategy_requested = strategy in KNOWN_STRATEGIES
+    if strategy != 'default' and not strategy_requested:
+        logging.warning(
+            f"⚠️ Strategia sconosciuta [{strategy}] (controlla l'annotation, probabile typo). "
+            f"Verrà trattata come 'default' (solo CPU/RAM)."
+        )
+
+    # --- 0. HARDWARE HARD FILTER ---
     candidate_nodes = dict(nodes_dict)
     required_hw_raw = annotations.get(ANNOTATION_HW_REQUIRED, '')
-    required_hw_tags = {t.strip() for t in required_hw_raw.split(',') if t.strip()}
+    required_hw_tags = {t.strip().lower() for t in required_hw_raw.split(',') if t.strip()}
 
     if required_hw_tags:
         node_hw_tags = get_node_hw_tags(api_instance, candidate_nodes)
@@ -447,15 +474,12 @@ def calculate_best_node(api_instance, nodes_dict, annotations):
     if strategy == 'minimize-latency':
         latency_target = annotations.get(ANNOTATION_LATENCY_TARGET, '').strip()
         if latency_target:
-            # NUOVO: latenza verso un target specifico (IP/alias) tra i tanti
-            # eventualmente sondati dal blackbox exporter.
-            safe_target = latency_target.replace('"', '\\"')
+            # Escaping: prima il backslash, poi le virgolette (ordine importante)
+            safe_target = latency_target.replace('\\', '\\\\').replace('"', '\\"')
             query = f'avg(probe_duration_seconds{{instance="{safe_target}"}}) by (kubernetes_node)'
             logging.info(f"📡 minimize-latency verso target specifico: [{latency_target}]")
         else:
-            # Nessun target specificato: media su TUTTI i target sondati da ciascun
-            # nodo (corregge anche un bug latente: con più target per nodo, le
-            # serie si sovrascrivevano a vicenda in modo non deterministico).
+            # Nessun target specificato: media su TUTTI i target sondati da ciascun nodo.
             query = 'avg(probe_duration_seconds) by (kubernetes_node)'
         strategy_metrics = get_prometheus_metric(query)
 
@@ -467,8 +491,6 @@ def calculate_best_node(api_instance, nodes_dict, annotations):
         strategy_metrics = get_prometheus_metric(
             'sum(rate(node_disk_io_time_seconds_total{device=~"sd.*|vd.*|nvme.*|mmcblk.*"}[2m])) by (instance)'
         )
-
-    strategy_available = bool(strategy_metrics)
 
     # --- 2. Utilizzo CPU/RAM: SEMPRE calcolato, sui nodi già filtrati per hardware ---
     resource_pct = get_resource_usage_percent(api_instance, candidate_nodes)
@@ -494,19 +516,38 @@ def calculate_best_node(api_instance, nodes_dict, annotations):
                 "CPU/RAM. Ignoro il filtro per questa volta per non lasciare il pod Pending indefinitamente."
             )
 
-    if not strategy_available and not resource_pct:
-        logging.warning(f"⚠️ Strategy [{strategy}] e metriche di risorsa entrambe non disponibili.")
-        _track_fallback(strategy)
-        return fallback_metrics_server(candidate_nodes)
-
-    # --- 4. SCORING PESATO: combina metrica di strategia + CPU + RAM ---
+    # --- 4. Cross-match della metrica di strategia sui nodi candidati (per nome o IP) ---
     strategy_raw = {}
-    if strategy_available:
+    if strategy_metrics:
         for node_name, node_ip in candidate_nodes.items():
             val = strategy_metrics.get(node_name, strategy_metrics.get(node_ip))
             if val is not None:
                 strategy_raw[node_name] = val
 
+    strategy_effective = bool(strategy_raw)
+
+    # --- FIX: la degradazione della strategia va SEMPRE loggata/tracciata, anche
+    #     quando CPU/RAM sono disponibili e "salvano" comunque la schedulazione.
+    #     Prima scattava solo se ANCHE le risorse fallivano, mascherando il problema. ---
+    already_tracked = False
+    if strategy_requested and not strategy_effective:
+        if strategy_metrics is None:
+            reason = "Prometheus irraggiungibile o errore nella query"
+        elif not strategy_metrics:
+            reason = "query eseguita ma senza risultati (metrica/exporter probabilmente assente)"
+        else:
+            reason = "nessuna corrispondenza tra le label della metrica (nome/IP) e i nodi candidati"
+        logging.warning(f"⚠️ Strategy [{strategy}] richiesta ma NON utilizzabile ({reason}).")
+        _track_fallback(strategy)
+        already_tracked = True
+
+    if not strategy_effective and not resource_pct:
+        logging.warning(f"⚠️ Nessuna metrica disponibile (né strategia né risorse) per [{strategy}].")
+        if not already_tracked:
+            _track_fallback(strategy)
+        return fallback_metrics_server(candidate_nodes)
+
+    # --- 5. SCORING PESATO: combina metrica di strategia + CPU + RAM ---
     cpu_raw = {n: resource_pct[n]['cpu_pct'] for n in candidate_nodes if n in resource_pct}
     mem_raw = {n: resource_pct[n]['mem_pct'] for n in candidate_nodes if n in resource_pct}
 
@@ -524,7 +565,8 @@ def calculate_best_node(api_instance, nodes_dict, annotations):
 
     if total_w == 0:
         logging.warning(f"⚠️ Nessuna metrica utilizzabile per lo scoring di [{strategy}].")
-        _track_fallback(strategy)
+        if not already_tracked:
+            _track_fallback(strategy)
         return fallback_metrics_server(candidate_nodes)
 
     scores = {}
@@ -541,7 +583,12 @@ def calculate_best_node(api_instance, nodes_dict, annotations):
 
     best_node = min(scores, key=scores.get)
     logging.info(f"🏆 Strategy [{strategy}] selected WINNER node: {best_node} (score={scores[best_node]:.3f})")
-    _consecutive_fallback_count[strategy] = 0
+
+    # Reset del contatore SOLO se la strategia richiesta ha davvero contribuito,
+    # oppure se non era stata richiesta nessuna strategia specifica (default).
+    if strategy_effective or not strategy_requested:
+        _consecutive_fallback_count[strategy] = 0
+
     return best_node
 
 
